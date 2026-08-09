@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException, Query, status
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
@@ -17,6 +18,15 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Enable CORS for M4's frontend (Streamlit / React / Browser apps)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows requests from any frontend domain
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 # --- Root & Health Check ---
 @app.get("/")
@@ -28,7 +38,7 @@ def ping():
     return {"status": "ok"}
 
 
-# --- POST /api/readings (With Kinetic Data & Classification) ---
+# --- POST /api/readings ---
 @app.post(
     "/api/readings", 
     response_model=schemas.LabReadingResponse, 
@@ -38,13 +48,8 @@ def create_reading(
     payload: schemas.LabReadingCreate, 
     db: Session = Depends(database.get_db)
 ):
-    """
-    Receives sensor JSON payload (including kinetic data), 
-    runs M1 classification, and stores the record in SQLite.
-    """
     data_dict = payload.model_dump()
     
-    # Run M1's decision tree classifier on raw + kinetic parameters
     classification_result = classifier.classify(
         ph=payload.ph,
         tds=payload.tds,
@@ -53,7 +58,6 @@ def create_reading(
         nh3_slope=payload.nh3_slope
     )
     
-    # Attach classification outputs
     data_dict["status"] = classification_result["status"]
     data_dict["reason"] = classification_result["reason"]
     data_dict["confidence"] = classification_result["confidence"]
@@ -66,30 +70,23 @@ def create_reading(
     return db_reading
 
 
-# --- GET /api/readings/latest (For M4's Live Badge) ---
+# --- GET /api/readings/latest ---
 @app.get("/api/readings/latest", response_model=schemas.LabReadingResponse)
 def get_latest_reading(db: Session = Depends(database.get_db)):
-    """
-    Fetches only the single most recent test reading.
-    """
     reading = db.query(models.LabReading).order_by(models.LabReading.id.desc()).first()
     if not reading:
         raise HTTPException(status_code=404, detail="No lab readings found")
     return reading
 
 
-# --- Day 5 Updated: GET /api/history (With Optional Status Filter) ---
+# --- GET /api/history ---
 @app.get("/api/history", response_model=List[schemas.LabReadingResponse])
 def get_history(
-    status_filter: Optional[str] = Query(None, description="Filter by status, e.g. PURE, ADULTERATED, SPOILED"),
+    status_filter: Optional[str] = Query(None, description="Filter by status: PURE, ADULTERATED, SPOILED"),
     skip: int = 0, 
     limit: int = 100, 
     db: Session = Depends(database.get_db)
 ):
-    """
-    Fetches all historical lab readings stored in the database.
-    Allows filtering by status and pagination via skip/limit.
-    """
     query = db.query(models.LabReading)
     
     if status_filter:
@@ -99,15 +96,9 @@ def get_history(
     return readings
 
 
-# --- Day 5 New: GET /api/stats (Summary Metrics for Dashboard) ---
+# --- GET /api/stats ---
 @app.get("/api/stats")
 def get_summary_stats(db: Session = Depends(database.get_db)):
-    """
-    Calculates aggregate metrics over all historical lab tests for M4 dashboard cards:
-    - Total tests executed
-    - Count & percentage of Pure vs Adulterated vs Spoiled
-    - Average kinetic stabilization parameters
-    """
     total_tests = db.query(models.LabReading).count()
     if total_tests == 0:
         return {
@@ -115,7 +106,7 @@ def get_summary_stats(db: Session = Depends(database.get_db)):
             "pure_count": 0,
             "adulterated_count": 0,
             "spoiled_count": 0,
-            "avg_tds_stable_time": 0.0,
+            "avg_tds_stable_time_sec": 0.0,
             "avg_nh3_slope": 0.0
         }
 
@@ -123,7 +114,6 @@ def get_summary_stats(db: Session = Depends(database.get_db)):
     adulterated_count = db.query(models.LabReading).filter(models.LabReading.status == "ADULTERATED").count()
     spoiled_count = db.query(models.LabReading).filter(models.LabReading.status == "SPOILED").count()
 
-    # Calculate average kinetic statistics
     avg_tds_stable = db.query(func.avg(models.LabReading.tds_stable_time)).scalar() or 0.0
     avg_nh3_slope = db.query(func.avg(models.LabReading.nh3_slope)).scalar() or 0.0
 
@@ -135,4 +125,54 @@ def get_summary_stats(db: Session = Depends(database.get_db)):
         "adulteration_rate_pct": round((adulterated_count / total_tests) * 100, 2),
         "avg_tds_stable_time_sec": round(avg_tds_stable, 2),
         "avg_nh3_slope": round(avg_nh3_slope, 4)
+    }
+
+
+# --- Day 6 Updated: GET /api/accuracy ---
+@app.get("/api/accuracy")
+def get_model_accuracy(db: Session = Depends(database.get_db)):
+    """
+    Calculates overall classification accuracy and confusion metrics 
+    by comparing predicted status against concentration ground truth.
+    """
+    all_readings = db.query(models.LabReading).all()
+    if not all_readings:
+        return {
+            "total_evaluated": 0,
+            "accuracy_pct": 0.0,
+            "correct_predictions": 0,
+            "incorrect_predictions": 0
+        }
+
+    correct_predictions = 0
+    total_evaluated = 0
+
+    for reading in all_readings:
+        # Safe fallback if concentration is None
+        conc = (reading.concentration or "").lower()
+        
+        # Safe fallback if status is None
+        predicted_status = (reading.status or "").upper()
+
+        # Skip rows that don't have a valid classification status
+        if not predicted_status:
+            continue
+
+        # Determine ground truth based on concentration label
+        if "pure" in conc or conc == "":
+            ground_truth = "PURE"
+        else:
+            ground_truth = "ADULTERATED"
+
+        total_evaluated += 1
+        if predicted_status == ground_truth:
+            correct_predictions += 1
+
+    accuracy_pct = (correct_predictions / total_evaluated) * 100 if total_evaluated > 0 else 0.0
+
+    return {
+        "total_evaluated": total_evaluated,
+        "correct_predictions": correct_predictions,
+        "incorrect_predictions": total_evaluated - correct_predictions,
+        "accuracy_pct": round(accuracy_pct, 2)
     }
