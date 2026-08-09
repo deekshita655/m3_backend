@@ -5,7 +5,7 @@ from typing import List, Optional
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 import classifier
@@ -38,10 +38,25 @@ def home():
     return {"message": "M3 Backend API is live!", "status": "ok"}
 
 
+# --- Day 8 Enhanced: Health Check & System Status ---
 @app.get("/ping")
-def ping():
-    return {"status": "ok"}
+def ping(db: Session = Depends(database.get_db)):
+    """
+    Health check endpoint that verifies API uptime 
+    and checks SQLite database connectivity under concurrent load.
+    """
+    try:
+        # Explicitly declare SQL text for SQLAlchemy 2.0+ compatibility
+        db.execute(text("SELECT 1"))
+        db_status = "connected"
+    except Exception as e:
+        db_status = f"error: {str(e)}"
 
+    return {
+        "status": "ok",
+        "database": db_status,
+        "service": "M3 Lab Backend API"
+    }
 
 # --- POST /api/readings ---
 @app.post(
