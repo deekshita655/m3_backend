@@ -5,14 +5,16 @@ from pydantic import BaseModel
 
 # --- Base Schema (Shared attributes) ---
 class LabReadingBase(BaseModel):
-  session_id: str
-  ph: float
-  tds: float
-  temperature: float
-  nh3: float
-  tds_stable_time: Optional[float] = None
-  nh3_slope: Optional[float] = None
-  concentration: Optional[str] = None
+    session_id: str
+    ph: Optional[float] = None
+    tds: Optional[float] = None
+    temperature: Optional[float] = None
+    nh3: Optional[float] = None
+    mq135_voltage: Optional[float] = None
+    ph_simulated: Optional[bool] = None
+    tds_stable_time: Optional[float] = None
+    nh3_slope: Optional[float] = None
+    concentration: Optional[str] = None
 
 
 # --- Schema for creating a reading via POST request ---

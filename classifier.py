@@ -1,16 +1,28 @@
-# classifier.py (M1's Logic Module)
-
 def classify(
-    ph: float, 
-    tds: float, 
-    nh3: float, 
-    tds_stable: float = None, 
+    ph: float = None,
+    tds: float = None,
+    nh3: float = None,
+    tds_stable: float = None,
     nh3_slope: float = None
 ):
     """
-    Classifies milk samples based on threshold standards research (M1 Day 1 & Day 2).
-    Returns a dictionary with status, reason, and confidence.
+    Provisional milk classification logic.
+
+    Missing measurements are not treated as zero.
+    Classification is withheld when required inputs are unavailable.
     """
+
+    # Do not make a classification using incomplete hardware data.
+    if tds is None or nh3 is None:
+        return {
+            "status": "UNCLASSIFIED",
+            "reason": (
+                "Insufficient sensor data for classification. "
+                "TDS and calibrated NH3 measurements are required."
+            ),
+            "confidence": 0.0
+        }
+
     # 1. Check for Spoiled Milk
     if nh3 > 20.0:
         return {
@@ -18,20 +30,20 @@ def classify(
             "reason": "Ammonia (NH3) level exceeds critical threshold (> 20.0)",
             "confidence": 0.98
         }
-        
+
     # 2. Check for Salt Adulteration
     if tds > 2000.0:
         return {
             "status": "ADULTERATED",
-            "reason": "Excessive Total Dissolved Solids detected (Salt adulteration: TDS > 2000)",
+            "reason": "Excessive TDS detected (Salt adulteration)",
             "confidence": 0.95
         }
-        
+
     # 3. Check for Water Dilution
     if tds < 650.0:
         return {
             "status": "ADULTERATED",
-            "reason": "Low Total Dissolved Solids detected (Water dilution: TDS < 650)",
+            "reason": "Low TDS detected (Water dilution)",
             "confidence": 0.92
         }
 
@@ -39,12 +51,17 @@ def classify(
     if 1200.0 <= tds <= 1800.0:
         return {
             "status": "ADULTERATED",
-            "reason": "Elevated TDS range detected (Sugar adulteration: TDS 1200-1800)",
+            "reason": "Elevated TDS range detected (Sugar adulteration)",
             "confidence": 0.88
         }
 
     # 5. Check for Urea Adulteration
-    if ph > 7.0 and (nh3_slope is not None and nh3_slope > 0.5):
+    if (
+        ph is not None
+        and ph > 7.0
+        and nh3_slope is not None
+        and nh3_slope > 0.5
+    ):
         return {
             "status": "ADULTERATED",
             "reason": "High pH combined with positive NH3 slope detected (Urea adulteration)",
@@ -55,13 +72,13 @@ def classify(
     if tds_stable is not None and tds_stable > 10.0:
         return {
             "status": "ADULTERATED",
-            "reason": "TDS stabilization time delayed (> 10s indicates Starch binder)",
+            "reason": "Delayed TDS stabilization detected (possible starch adulteration)",
             "confidence": 0.90
         }
 
-    # 7. Baseline Pure Milk
+    # 7. Baseline classification
     return {
         "status": "PURE",
-        "reason": "All sensor values fall within baseline non-adulterated milk parameters",
+        "reason": "All available measurements fall within provisional baseline parameters",
         "confidence": 0.99
     }

@@ -1,0 +1,16 @@
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Python virtual environment
+venv/
+__pycache__/
+*.pyc
+
+# Local database
+*.db
+*.db-journal
+
+# Editor configuration
+*.code-workspace
